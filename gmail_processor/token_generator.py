@@ -1,47 +1,41 @@
-# token_generator.py
 import os
+import json
 from pathlib import Path
 from google_auth_oauthlib.flow import InstalledAppFlow
-import json
 
-# The SCOPE from your Apify Actor
-SCOPES = ['https://www.googleapis.com/auth/gmail.readonly'] 
+# The SCOPE from your Apify Actor (includes compose now)
+SCOPES = [
+    'https://www.googleapis.com/auth/gmail.readonly',
+    'https://www.googleapis.com/auth/gmail.compose'
+]
 
 def generate_credentials_json():
-    """Performs the OAuth flow and prints the resulting JSON credentials."""
+    """Performs the OAuth flow and updates gmail_credentials.json automatically."""
     
     # Get the directory where this script is located
     script_dir = Path(__file__).parent
     client_secret_path = script_dir / 'client_secret.json'
+    gmail_creds_path = script_dir / 'gmail_credentials.json'
     
-    # Check if the file exists
+    # Check if client_secret exists
     if not client_secret_path.exists():
         print(f"Error: client_secret.json not found at {client_secret_path}")
-        print(f"Please ensure client_secret.json is in the same directory as this script.")
         return
     
-    # Load and validate the client secrets file
+    # Load and validate client secrets
     try:
         with open(client_secret_path, 'r') as f:
             client_config = json.load(f)
-    except json.JSONDecodeError as e:
-        print(f"Error: client_secret.json is not valid JSON: {e}")
-        return
     except Exception as e:
         print(f"Error reading client_secret.json: {e}")
         return
     
     # Convert "web" format to "installed" format if needed
-    # InstalledAppFlow expects "installed" key with specific OAuth URIs
     if "web" in client_config and "installed" not in client_config:
         print("Converting 'web' OAuth client to 'installed' format...")
         web_config = client_config.pop("web")
-        
-        # Create installed config with required fields
-        # For installed apps, redirect_uris should include localhost variants
         redirect_uris = web_config.get("redirect_uris", [])
         if not redirect_uris or redirect_uris == ["http://localhost"]:
-            # Use standard redirect URIs for installed apps
             redirect_uris = ["http://localhost"]
         
         client_config["installed"] = {
@@ -52,56 +46,60 @@ def generate_credentials_json():
             "auth_provider_x509_cert_url": web_config.get("auth_provider_x509_cert_url", "https://www.googleapis.com/oauth2/v1/certs"),
             "redirect_uris": redirect_uris
         }
-        
-        # Validate required fields
-        if not client_config["installed"].get("client_id") or not client_config["installed"].get("client_secret"):
-            print("Error: client_id and client_secret are required in client_secret.json")
-            return
-    
-    # Validate the format
+
     if "installed" not in client_config:
-        print("Error: client_secret.json must contain either 'installed' or 'web' key.")
-        print("Please download OAuth 2.0 credentials for 'Desktop app' from Google Cloud Console.")
+        print("Error: Invalid client_secret.json format.")
         return
     
-    # Debug: Print the config structure (without secrets)
-    installed_config = client_config["installed"]
-    print(f"Using OAuth client: {installed_config.get('client_id', 'N/A')[:20]}...")
-    print(f"Redirect URIs: {installed_config.get('redirect_uris', [])}")
+    print("Starting OAuth flow...")
     
-    # 1. Start the flow using from_client_config
+    # 1. Start the flow
     try:
-        flow = InstalledAppFlow.from_client_config(
-            client_config,
-            scopes=SCOPES
+        flow = InstalledAppFlow.from_client_config(client_config, scopes=SCOPES)
+        credentials = flow.run_local_server(
+            port=0,
+            access_type='offline',
+            prompt='consent'
         )
-    except ValueError as e:
-        print(f"\nError creating OAuth flow: {e}")
-        print("\nTroubleshooting:")
-        print("1. Ensure your OAuth client in Google Cloud Console is configured for 'Desktop app'")
-        print("2. Make sure 'http://localhost' is added as an authorized redirect URI")
-        print("3. Try downloading a new OAuth 2.0 client ID as 'Desktop app' type")
-        print(f"\nCurrent config structure: {list(installed_config.keys())}")
+    except Exception as e:
+        print(f"Error during OAuth flow: {e}")
         return
     
-    # Use run_local_server for the Desktop App flow
-    credentials = flow.run_local_server(
-        port=0, # Choose a random available port
-        access_type='offline', # MANDATORY: Ensures a refresh_token is returned
-        prompt='consent' # MANDATORY: Forces the consent screen, ensuring a refresh_token
-    )
+    # 2. Get the new credentials string
+    new_creds_json_string = credentials.to_json()
     
-    # 2. Get the required JSON string
-    creds_json = credentials.to_json()
+    # 3. Update gmail_credentials.json
+    current_data = {}
     
-    # 3. Print the result
-    print("\n\n#####################################################")
-    print("COPY THIS ENTIRE JSON STRING (GMAIL_CREDENTIALS_JSON):")
-    print("#####################################################\n")
-    # This JSON string contains the refresh_token that Apify needs
-    print(creds_json)
+    # Read existing file to preserve other settings (like gmailQuery)
+    if gmail_creds_path.exists():
+        try:
+            with open(gmail_creds_path, 'r') as f:
+                current_data = json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not read existing gmail_credentials.json ({e}). Creating new file.")
+
+    # Update the credentials key
+    current_data["GMAIL_CREDENTIALS_JSON"] = new_creds_json_string
+    
+    # Ensure default fields exist if it's a new file
+    if "gmailQuery" not in current_data:
+        current_data["gmailQuery"] = "subject:invoice after:2024/01/01"
+    if "attachmentMimeTypes" not in current_data:
+        current_data["attachmentMimeTypes"] = ["application/pdf"]
+
+    # Write back to file
+    try:
+        with open(gmail_creds_path, 'w') as f:
+            json.dump(current_data, f, indent=2)
+        
+        print("\nSUCCESS!")
+        print(f"Updated credentials in: {gmail_creds_path}")
+        print("You can now run your client.")
+        
+    except Exception as e:
+        print(f"Error writing to file: {e}")
 
 if __name__ == '__main__':
-    # Setting this allows the use of HTTP for the local redirect
     os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1' 
     generate_credentials_json()
