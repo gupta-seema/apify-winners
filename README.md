@@ -3,6 +3,9 @@
 
 > **A Hackathon Project that builds its own tools.**_Powered by Model Context Protocol (MCP), Anthropic Claude, and Apify._
 
+[![Video Title](https://img.youtube.com/watch?v=lJeGwDc_UOc/0.jpg)](https://www.youtube.com/watch?v=lJeGwDc_UOc)
+
+
 💡 What is it?
 --------------
 
